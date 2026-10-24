@@ -12,7 +12,7 @@ import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
 import { mockCategories } from '../data/mockCategories';
-import { mockService } from '../services/mockService';
+import { apiService } from '../services/apiService';
 import { SalaryPeriod } from '../types';
 
 export const PostJob: React.FC = () => {
@@ -53,7 +53,7 @@ export const PostJob: React.FC = () => {
         .map(s => s.trim())
         .filter(Boolean);
 
-      const created = await mockService.createJob({
+      const created = await apiService.createJob({
         title: title.trim(),
         category: category,
         categoryHi: mockCategories.find(c => c.nameEn === category)?.nameHi || category,
@@ -84,8 +84,10 @@ export const PostJob: React.FC = () => {
       );
 
       navigate('/manage-jobs');
-    } catch {
-      showToast('Error creating job', 'error');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Error creating job';
+      console.error('[PostJob] createJob error:', err);
+      showToast(msg, 'error');
     } finally {
       setIsSubmitting(false);
     }

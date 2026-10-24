@@ -3,3 +3,17 @@ dist/
 .env
 .env.*
 !.env.example
+
+# Backend
+backend/.env
+backend/node_modules/
+backend/*.log
+
+# Frontend
+.env.local
+.env.*.local
+
+# Credentials (never commit)
+*credentials*.json
+*service-account*.json
+*.pem

@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: rojgar-mitra-api
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: GOOGLE_SERVICE_ACCOUNT_EMAIL
+        sync: false
+      - key: GOOGLE_PRIVATE_KEY
+        sync: false
+      - key: SPREADSHEET_ID
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false

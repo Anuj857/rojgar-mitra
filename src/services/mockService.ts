@@ -1,6 +1,7 @@
 import { Job, Worker, Application, HiringRequest, ApplicationStatus } from '../types';
 import { mockJobs } from '../data/mockJobs';
 import { mockWorkers } from '../data/mockWorkers';
+import { apiService } from './apiService';
 
 /**
  * Rojgar Mitra Mock Service Layer
@@ -105,10 +106,21 @@ export const mockService = {
     urgentOnly?: boolean;
     salaryPeriod?: string;
   }): Promise<Job[]> {
-    const all = getStoredJobs();
-    if (!filters) return all;
+    let serverJobs: Job[] = [];
+    try {
+      serverJobs = await apiService.getJobs(filters);
+    } catch (err) {
+      console.warn('[mockService] Backend getJobs failed, falling back to local data:', err);
+    }
 
-    return all.filter(job => {
+    // Merge server jobs with initial mock jobs (avoiding duplicate IDs)
+    const stored = getStoredJobs();
+    const serverIds = new Set(serverJobs.map(j => j.id));
+    const merged = [...serverJobs, ...stored.filter(j => !serverIds.has(j.id))];
+
+    if (!filters) return merged;
+
+    return merged.filter(job => {
       if (filters.keyword) {
         const q = filters.keyword.toLowerCase();
         const matchTitle = job.title.toLowerCase().includes(q);
@@ -140,39 +152,51 @@ export const mockService = {
   },
 
   async getJobById(id: string): Promise<Job | null> {
+    try {
+      const serverJob = await apiService.getJobById(id);
+      if (serverJob) return serverJob;
+    } catch (err) {
+      console.warn('[mockService] Backend getJobById failed, falling back:', err);
+    }
     const all = getStoredJobs();
     return all.find(j => j.id === id) || null;
   },
 
   async createJob(newJob: Omit<Job, 'id' | 'createdAt' | 'applicationsCount' | 'workersHired'>): Promise<Job> {
-    const all = getStoredJobs();
-    const created: Job = {
-      ...newJob,
-      id: `job-demo-${Date.now()}`,
-      createdAt: 'अभी-अभी (Just now)',
-      applicationsCount: 0,
-      workersHired: 0
-    };
-    all.unshift(created);
-    localStorage.setItem(STORAGE_KEYS.JOBS, JSON.stringify(all));
+    // Write directly to Google Sheets via backend
+    const created = await apiService.createJob(newJob);
+
+    // Also update localStorage cache for offline responsiveness
+    try {
+      const all = getStoredJobs();
+      all.unshift(created);
+      localStorage.setItem(STORAGE_KEYS.JOBS, JSON.stringify(all));
+    } catch {}
+
     return created;
   },
 
   async updateJobStatus(jobId: string, status: 'active' | 'closed' | 'paused'): Promise<Job | null> {
-    const all = getStoredJobs();
-    const index = all.findIndex(j => j.id === jobId);
-    if (index === -1) return null;
-    all[index].status = status;
-    localStorage.setItem(STORAGE_KEYS.JOBS, JSON.stringify(all));
-    return all[index];
+    const updated = await apiService.updateJobStatus(jobId, status);
+    try {
+      const all = getStoredJobs();
+      const index = all.findIndex(j => j.id === jobId);
+      if (index !== -1 && updated) {
+        all[index] = updated;
+        localStorage.setItem(STORAGE_KEYS.JOBS, JSON.stringify(all));
+      }
+    } catch {}
+    return updated;
   },
 
   async deleteJob(jobId: string): Promise<boolean> {
-    let all = getStoredJobs();
-    const beforeCount = all.length;
-    all = all.filter(j => j.id !== jobId);
-    localStorage.setItem(STORAGE_KEYS.JOBS, JSON.stringify(all));
-    return all.length < beforeCount;
+    const success = await apiService.deleteJob(jobId);
+    try {
+      let all = getStoredJobs();
+      all = all.filter(j => j.id !== jobId);
+      localStorage.setItem(STORAGE_KEYS.JOBS, JSON.stringify(all));
+    } catch {}
+    return success;
   },
 
   // --- WORKERS ---
@@ -237,69 +261,81 @@ export const mockService = {
 
   // --- APPLICATIONS ---
   async applyForJob(application: Omit<Application, 'id' | 'appliedAt' | 'status'>): Promise<Application> {
-    const apps = getStoredApplications();
-    // Check if already applied
-    const existing = apps.find(a => a.jobId === application.jobId && a.workerId === application.workerId);
-    if (existing) {
-      return existing;
+    try {
+      const created = await apiService.applyForJob(application);
+      const apps = getStoredApplications();
+      apps.unshift(created);
+      localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(apps));
+      return created;
+    } catch (err) {
+      console.error('[mockService] applyForJob failed on backend:', err);
+      throw err;
     }
-
-    const newApp: Application = {
-      ...application,
-      id: `app-${Date.now()}`,
-      appliedAt: 'अभी-अभी (Just now)',
-      status: 'pending'
-    };
-
-    apps.unshift(newApp);
-    localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(apps));
-
-    // Increment application count on the job
-    const jobs = getStoredJobs();
-    const jobIdx = jobs.findIndex(j => j.id === application.jobId);
-    if (jobIdx >= 0) {
-      jobs[jobIdx].applicationsCount = (jobs[jobIdx].applicationsCount || 0) + 1;
-      localStorage.setItem(STORAGE_KEYS.JOBS, JSON.stringify(jobs));
-    }
-
-    return newApp;
   },
 
   async getMyApplications(workerId?: string): Promise<Application[]> {
+    try {
+      const serverApps = await apiService.getMyApplications(workerId);
+      if (serverApps && serverApps.length > 0) {
+        return serverApps;
+      }
+    } catch (err) {
+      console.warn('[mockService] getMyApplications failed on backend:', err);
+    }
     const apps = getStoredApplications();
     if (!workerId) return apps;
     return apps.filter(a => a.workerId === workerId);
   },
 
   async updateApplicationStatus(appId: string, status: ApplicationStatus): Promise<Application | null> {
-    const apps = getStoredApplications();
-    const idx = apps.findIndex(a => a.id === appId);
-    if (idx === -1) return null;
-    apps[idx].status = status;
-    localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(apps));
-    return apps[idx];
+    try {
+      const updated = await apiService.updateApplicationStatus(appId, status);
+      const apps = getStoredApplications();
+      const idx = apps.findIndex(a => a.id === appId);
+      if (idx !== -1 && updated) {
+        apps[idx] = updated;
+        localStorage.setItem(STORAGE_KEYS.APPLICATIONS, JSON.stringify(apps));
+      }
+      return updated;
+    } catch (err) {
+      console.error('[mockService] updateApplicationStatus failed on backend:', err);
+      throw err;
+    }
   },
 
   async getApplicationsForJob(jobId: string): Promise<Application[]> {
-    const apps = getStoredApplications();
-    return apps.filter(a => a.jobId === jobId);
+    try {
+      return await apiService.getApplicationsForJob(jobId);
+    } catch (err) {
+      console.warn('[mockService] getApplicationsForJob failed on backend:', err);
+      const apps = getStoredApplications();
+      return apps.filter(a => a.jobId === jobId);
+    }
   },
 
   // --- HIRING REQUESTS ---
   async sendHiringRequest(request: Omit<HiringRequest, 'id' | 'sentAt' | 'status'>): Promise<HiringRequest> {
-    const requests = getStoredHiringRequests();
-    const newReq: HiringRequest = {
-      ...request,
-      id: `hire-req-${Date.now()}`,
-      sentAt: 'अभी (Just now)',
-      status: 'sent'
-    };
-    requests.unshift(newReq);
-    localStorage.setItem(STORAGE_KEYS.HIRING_REQUESTS, JSON.stringify(requests));
-    return newReq;
+    try {
+      const created = await apiService.sendHiringRequest(request);
+      const requests = getStoredHiringRequests();
+      requests.unshift(created);
+      localStorage.setItem(STORAGE_KEYS.HIRING_REQUESTS, JSON.stringify(requests));
+      return created;
+    } catch (err) {
+      console.error('[mockService] sendHiringRequest failed on backend:', err);
+      throw err;
+    }
   },
 
-  async getHiringRequests(): Promise<HiringRequest[]> {
+  async getHiringRequests(workerId?: string): Promise<HiringRequest[]> {
+    try {
+      const serverReqs = await apiService.getHiringRequests(workerId);
+      if (serverReqs && serverReqs.length > 0) {
+        return serverReqs;
+      }
+    } catch (err) {
+      console.warn('[mockService] getHiringRequests failed on backend:', err);
+    }
     return getStoredHiringRequests();
   },
 

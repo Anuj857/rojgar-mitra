@@ -15,7 +15,7 @@ import {
 import { useLanguage } from '../context/LanguageContext';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
-import { mockService } from '../services/mockService';
+import { apiService } from '../services/apiService';
 import { Job, Application, ApplicationStatus } from '../types';
 
 export const ManageJobs: React.FC = () => {
@@ -41,9 +41,18 @@ export const ManageJobs: React.FC = () => {
 
   const loadJobs = async () => {
     setLoading(true);
-    const all = await mockService.getJobs();
-    setJobs(all);
-    setLoading(false);
+    try {
+      const all = await apiService.getJobs();
+      setJobs(all);
+    } catch (err) {
+      console.error('[ManageJobs] getJobs error:', err);
+      showToast(
+        language === 'hi' ? 'जॉब लोड करने में त्रुटि' : 'Error loading jobs from server',
+        'error'
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -53,42 +62,63 @@ export const ManageJobs: React.FC = () => {
   const handleOpenApplications = async (job: Job) => {
     setSelectedJobForApps(job);
     setLoadingApps(true);
-    const apps = await mockService.getApplicationsForJob(job.id);
-    setJobApplications(apps);
-    setLoadingApps(false);
+    try {
+      const apps = await apiService.getApplicationsForJob(job.id);
+      setJobApplications(apps);
+    } catch (err) {
+      console.error('[ManageJobs] getApplicationsForJob error:', err);
+      showToast('Error loading applications', 'error');
+    } finally {
+      setLoadingApps(false);
+    }
   };
 
   const handleUpdateAppStatus = async (appId: string, status: ApplicationStatus) => {
-    await mockService.updateApplicationStatus(appId, status);
-    if (selectedJobForApps) {
-      const refreshed = await mockService.getApplicationsForJob(selectedJobForApps.id);
-      setJobApplications(refreshed);
+    try {
+      await apiService.updateApplicationStatus(appId, status);
+      if (selectedJobForApps) {
+        const refreshed = await apiService.getApplicationsForJob(selectedJobForApps.id);
+        setJobApplications(refreshed);
+      }
+      showToast(
+        language === 'hi'
+          ? `आवेदन स्थिति अपडेट हुई: ${status === 'accepted' ? 'स्वीकृत (Accepted)' : 'अस्वीकृत (Rejected)'}`
+          : `Application status updated to ${status}`,
+        'success'
+      );
+    } catch (err) {
+      console.error('[ManageJobs] updateApplicationStatus error:', err);
+      showToast('Error updating application status', 'error');
     }
-    showToast(
-      language === 'hi' 
-        ? `आवेदन स्थिति अपडेट हुई: ${status === 'accepted' ? 'स्वीकृत (Accepted)' : 'अस्वीकृत (Rejected)'}` 
-        : `Application status updated to ${status}`,
-      'success'
-    );
   };
 
   const handleToggleJobStatus = async (job: Job) => {
     const nextStatus = job.status === 'active' ? 'closed' : 'active';
-    await mockService.updateJobStatus(job.id, nextStatus);
-    showToast(
-      language === 'hi'
-        ? `काम की स्थिति बदली: ${nextStatus === 'closed' ? 'बंद (Closed)' : 'सक्रिय (Active)'}`
-        : `Job status changed to ${nextStatus}`,
-      'info'
-    );
-    loadJobs();
+    try {
+      await apiService.updateJobStatus(job.id, nextStatus);
+      showToast(
+        language === 'hi'
+          ? `काम की स्थिति बदली: ${nextStatus === 'closed' ? 'बंद (Closed)' : 'सक्रिय (Active)'}`
+          : `Job status changed to ${nextStatus}`,
+        'info'
+      );
+      loadJobs();
+    } catch (err) {
+      console.error('[ManageJobs] updateJobStatus error:', err);
+      showToast('Error updating job status', 'error');
+    }
   };
 
   const handleDeleteJob = async (jobId: string) => {
     if (window.confirm(language === 'hi' ? 'क्या आप इस जॉब पोस्टिंग को हटाना चाहते हैं?' : 'Are you sure you want to delete this job?')) {
-      await mockService.deleteJob(jobId);
-      showToast(language === 'hi' ? 'जॉब सफलतापूर्वक हटाई गई' : 'Job deleted successfully', 'success');
-      loadJobs();
+      try {
+        await apiService.deleteJob(jobId);
+        showToast(language === 'hi' ? 'जॉब सफलतापूर्वक हटाई गई' : 'Job deleted successfully', 'success');
+        loadJobs();
+      } catch (err) {
+        console.error('[ManageJobs] deleteJob error:', err);
+        showToast('Error deleting job', 'error');
+      }
     }
   };
 
@@ -104,24 +134,26 @@ export const ManageJobs: React.FC = () => {
     e.preventDefault();
     if (!editingJob) return;
 
-    // Update in local array
-    const updatedJobs = jobs.map(j => {
-      if (j.id === editingJob.id) {
-        return {
-          ...j,
-          title: editTitle,
-          salary: editSalary,
-          workersRequired: editWorkersRequired,
-          description: editDescription
-        };
-      }
-      return j;
-    });
+    const updatedJob: Job = {
+      ...editingJob,
+      title: editTitle,
+      salary: editSalary,
+      workersRequired: editWorkersRequired,
+      description: editDescription,
+    };
 
-    setJobs(updatedJobs);
-    localStorage.setItem('rojgar_demo_jobs_v1', JSON.stringify(updatedJobs));
-    setEditingJob(null);
-    showToast(language === 'hi' ? 'जॉब विवरण अपडेट हो गया!' : 'Job updated successfully!', 'success');
+    try {
+      await apiService.updateJob(editingJob.id, updatedJob);
+      // Optimistic UI update while backend syncs
+      setJobs(prev => prev.map(j => j.id === editingJob.id ? updatedJob : j));
+      setEditingJob(null);
+      showToast(language === 'hi' ? 'जॉब विवरण अपडेट हो गया!' : 'Job updated successfully!', 'success');
+      // Reload from backend to get server state
+      loadJobs();
+    } catch (err) {
+      console.error('[ManageJobs] handleSaveEdit error:', err);
+      showToast('Error saving job edits', 'error');
+    }
   };
 
   const displayedJobs = jobs.filter(j => 

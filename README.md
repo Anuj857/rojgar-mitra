@@ -215,3 +215,203 @@ When you are ready to integrate Google Sheets as the lightweight backend:
 3. **Plugging in the Service Layer**:
    - Replace the internal `localStorage` methods in `src/services/mockService.ts` with `fetch()` calls to Google Sheets API endpoints (or a serverless proxy like Google Apps Script Web App / Cloud Function).
    - Because all components consume `mockService.getJobs()`, `mockService.createJob()`, `mockService.applyForJob()`, etc., **zero UI component modifications** will be required!
+
+
+---
+
+## ✅ Phase 2: Google Sheets Backend — Implemented
+
+The project now has a fully functional Express.js backend using **Google Sheets as the data store**, replacing the previous MongoDB setup.
+
+### What Was Implemented
+
+| File | Purpose |
+|------|---------|
+| `backend/package.json` | Backend dependencies (express, googleapis, dotenv, cors, express-validator) |
+| `backend/server.js` | Rewritten — Express app with CORS, health check, and route mounting |
+| `backend/services/sheetsService.js` | Clean Google Sheets data-access layer (no business logic) |
+| `backend/routes/jobRoutes.js` | CRUD + filter endpoints for Jobs sheet |
+| `backend/routes/workerRoutes.js` | CRUD + filter endpoints for Workers sheet |
+| `backend/routes/applicationRoutes.js` | Apply, list, and status-update endpoints for Applications sheet |
+| `backend/routes/hiringRoutes.js` | Create and list endpoints for HiringRequests sheet |
+| `src/services/apiService.ts` | Frontend fetch wrapper — mirrors mockService interface exactly |
+| `backend/.env.example` | Backend environment variable template |
+| `.env.example` | Frontend environment variable template |
+| `vercel.json` | Vercel deployment config (SPA rewrite + env var) |
+| `backend/render.yaml` | Render.com free-tier deployment config |
+
+---
+
+### 🗂️ Google Sheets — Required Sheet Setup
+
+Create a Google Spreadsheet with **4 tabs**, each with the following **exact header rows** in **row 1**:
+
+#### Sheet 1: `Jobs`
+```
+id	title	category	categoryHi	description	salary	salaryPeriod	location	distanceKm	workersRequired	workersHired	requiredExperience	workDuration	workingHours	startDate	isUrgent	employerId	employerName	employerRating	employerPhone	status	createdAt	applicationsCount	requiredSkills
+```
+
+#### Sheet 2: `Workers`
+```
+id	name	mobile	category	categoryHi	skills	experienceYears	preferredSalary	salaryPeriod	location	distanceKm	preferredDistanceKm	availabilityStatus	profilePhotoUrl	rating	reviewsCount	completedJobsCount	verified	languages	about
+```
+
+#### Sheet 3: `Applications`
+```
+id	jobId	jobTitle	category	employerName	location	salary	salaryPeriod	workerId	workerName	workerMobile	workerSkill	appliedAt	status	expectedSalary	notes
+```
+
+#### Sheet 4: `HiringRequests`
+```
+id	workerId	workerName	employerId	employerName	employerPhone	jobRole	proposedDailyWage	location	workDuration	message	status	sentAt
+```
+
+> [!IMPORTANT]
+> Tab names must match exactly: `Jobs`, `Workers`, `Applications`, `HiringRequests` (case-sensitive).
+
+---
+
+### ☁️ Google Cloud Console Setup
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com)
+2. Create a new project (or select existing)
+3. Enable **Google Sheets API**: *APIs & Services → Library → Search "Sheets" → Enable*
+4. Create a **Service Account**:
+   - *IAM & Admin → Service Accounts → Create Service Account*
+   - Name it (e.g. `rojgar-mitra-sheets`)
+   - No roles needed at project level
+   - Click **Done**
+5. Generate a key:
+   - Click the service account → *Keys → Add Key → Create new key → JSON*
+   - Download the `.json` file — **never commit this**
+6. **Share your Google Spreadsheet** with the service account email (e.g. `rojgar-mitra-sheets@your-project.iam.gserviceaccount.com`) as **Editor**
+
+---
+
+### 🔑 Environment Variable Setup
+
+**Backend** — create `backend/.env` (copy from `backend/.env.example`):
+```env
+GOOGLE_SERVICE_ACCOUNT_EMAIL=rojgar-mitra-sheets@your-project.iam.gserviceaccount.com
+GOOGLE_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\nMII...\n-----END RSA PRIVATE KEY-----\n"
+SPREADSHEET_ID=1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms
+PORT=5000
+ALLOWED_ORIGINS=http://localhost:5173
+```
+
+> [!TIP]
+> The `GOOGLE_PRIVATE_KEY` value comes from the `"private_key"` field in the downloaded JSON file. Copy the entire value including `-----BEGIN...` and `-----END...` lines. Keep the `\n` escape sequences — the backend handles converting them to real newlines.
+
+**Frontend** — create `.env.local` (copy from `.env.example`):
+```env
+VITE_API_URL=http://localhost:5000
+```
+
+---
+
+### 🚀 Running the Backend
+
+```bash
+# Install backend dependencies (first time only)
+cd backend
+npm install
+
+# Start in development mode (auto-restart on change)
+npm run dev
+
+# Or start in production mode
+npm start
+```
+
+The backend starts on port 5000 by default. Test it:
+```bash
+curl http://localhost:5000/health
+# → {"status":"ok","googleSheets":true,...}
+```
+
+### Running Both Frontend + Backend
+
+Open two terminals:
+
+```bash
+# Terminal 1 — Frontend (Vite dev server)
+cd c:\rojgar-mitra
+npm run dev
+
+# Terminal 2 — Backend (Express)
+cd c:\rojgar-mitra\backend
+npm run dev
+```
+
+---
+
+### 🔌 Using `apiService` vs `mockService`
+
+The new `src/services/apiService.ts` mirrors the exact same method signatures as `mockService.ts`. To switch any page from mock data to live data, change the import:
+
+```typescript
+// Before (localStorage mock data)
+import { mockService } from '../services/mockService';
+
+// After (Google Sheets live data)
+import { apiService as mockService } from '../services/apiService';
+```
+
+Zero other changes needed — all method names and return types are identical.
+
+---
+
+### 🔁 Future: Supabase Migration Path
+
+The `sheetsService.js` is a pure data-access layer with no business logic, designed for easy replacement. When migrating to Supabase:
+
+| Google Sheets Sheet | Supabase Table | Notes |
+|---------------------|----------------|-------|
+| `Jobs` | `jobs` | Same columns, add `uuid` primary key |
+| `Workers` | `workers` | Split `skills` CSV → array column |
+| `Applications` | `applications` | Add foreign key constraints |
+| `HiringRequests` | `hiring_requests` | Add RLS policies per employer |
+
+Replace `sheetsService.js` with a `supabaseService.js` that exports the same methods: `getSheetData()`, `appendRow()`, `updateRow()`, `deleteSheetRow()`. No route files need to change.
+
+---
+
+### 🌐 Deployment
+
+#### Frontend → Vercel
+
+1. Push to GitHub
+2. Import the repo on [vercel.com](https://vercel.com)
+3. Set environment variable `VITE_API_URL` → your Render backend URL
+4. Deploy — `vercel.json` handles SPA routing automatically
+
+#### Backend → Render (Free Tier)
+
+1. Push `backend/` to GitHub (or a subdirectory)
+2. Create a new **Web Service** on [render.com](https://render.com)
+3. Set **Root Directory** to `backend`
+4. Use `backend/render.yaml` for configuration reference
+5. Add environment variables in the Render dashboard:
+   - `GOOGLE_SERVICE_ACCOUNT_EMAIL`
+   - `GOOGLE_PRIVATE_KEY`
+   - `SPREADSHEET_ID`
+   - `ALLOWED_ORIGINS` (your Vercel URL)
+
+> [!NOTE]
+> Render's free tier spins down after 15 minutes of inactivity. The first request after a cold start may take ~30 seconds. Consider upgrading to the Starter plan (\$7/month) for always-on service in production.
+
+---
+
+### 📋 Setup & Verification Status
+
+- [x] Create the Google Spreadsheet with 4 tabs (`Jobs`, `Workers`, `Applications`, `HiringRequests`)
+- [x] Create Google Cloud project and enable Sheets API
+- [x] Create Service Account and configure credentials in `backend/.env`
+- [x] Share the spreadsheet with the service account email as Editor
+- [x] Connect frontend `PostJob` and `ManageJobs` directly to backend API
+- [x] Wire `mockService` with `apiService` delegation for unified Google Sheets persistence
+- [x] Verify live write: `POST /api/jobs` appends row directly to Google Sheets
+- [x] Verify live read: `GET /api/jobs` retrieves records live from Google Sheets
+- [x] Verify live update: `PATCH /api/jobs/:id/status` & `PUT /api/jobs/:id` update row in Google Sheets
+- [x] Verify live delete: `DELETE /api/jobs/:id` deletes row from Google Sheets
+- [x] Frontend production build verified (`npm run build` succeeds, exit 0)
