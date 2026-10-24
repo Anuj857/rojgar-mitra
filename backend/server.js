@@ -8,22 +8,37 @@ const jobRoutes = require('./routes/jobRoutes');
 const workerRoutes = require('./routes/workerRoutes');
 const applicationRoutes = require('./routes/applicationRoutes');
 const hiringRoutes = require('./routes/hiringRoutes');
-// Keep old userRoutes for backward compatibility but don't use mongoose
-// const userRoutes = require('./routes/userRoutes');
+const supabaseService = require('./services/supabaseService');
 
 const app = express();
 
 // --- CORS ---
-const allowedOrigins = process.env.ALLOWED_ORIGINS
-  ? process.env.ALLOWED_ORIGINS.split(',')
-  : ['http://localhost:5173', 'http://localhost:4173'];
+// const allowedOrigins = process.env.ALLOWED_ORIGINS
+//   ? process.env.ALLOWED_ORIGINS.split(',')
+//   : ['http://localhost:5173', 'http://localhost:4173'];
+
+// app.use(cors({
+//   origin: (origin, callback) => {
+//     if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+//     callback(new Error(`CORS: Origin ${origin} not allowed`));
+//   },
+//   credentials: true,
+// }));
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
 
 app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-    callback(new Error(`CORS: Origin ${origin} not allowed`));
-  },
-  credentials: true,
+  origin(origin, callback) {
+    // Allow requests without an Origin header, such as curl.
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    console.error(`[Error] CORS: Origin ${origin} not allowed`);
+    return callback(new Error('Origin not allowed by CORS'));
+  }
 }));
 
 app.use(express.json());
@@ -44,12 +59,19 @@ app.get('/health', (req, res) => {
     status: 'ok',
     service: 'Rojgar Mitra API',
     timestamp: new Date().toISOString(),
-    googleSheets: !!(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY && process.env.SPREADSHEET_ID),
+    database: 'supabase',
+    supabaseConfigured: supabaseService.isConfigured(),
+    // Keep googleSheetsConfigured for rollback verification during migration
+    googleSheetsConfigured: !!(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.GOOGLE_PRIVATE_KEY && process.env.SPREADSHEET_ID),
   });
 });
 
 app.get('/', (req, res) => {
-  res.json({ message: 'Rojgar Mitra API Running', version: '2.0.0' });
+  res.json({
+    message: 'Rojgar Mitra API Running',
+    version: '2.1.0',
+    database: 'Supabase PostgreSQL',
+  });
 });
 
 // --- API Routes ---
@@ -67,5 +89,5 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Rojgar Mitra API running on port ${PORT}`);
-  console.log(`Google Sheets configured: ${!!(process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL && process.env.SPREADSHEET_ID)}`);
+  console.log(`Database: Supabase PostgreSQL (configured: ${supabaseService.isConfigured()})`);
 });

@@ -1,34 +1,19 @@
+'use strict';
 const express = require('express');
 const router = express.Router();
-const { body, param, validationResult } = require('express-validator');
-const sheetsService = require('../services/sheetsService');
-
-const SHEET = 'Jobs';
+const { body, validationResult } = require('express-validator');
+const supabaseService = require('../services/supabaseService');
 
 const handleValidation = (req, res, next) => {
   const errors = validationResult(req);
-  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+  if (!errors.isEmpty()) return res.status(400).json({ success: false, errors: errors.array() });
   next();
 };
 
 // GET /api/jobs - List all jobs with optional filters
 router.get('/', async (req, res) => {
   try {
-    let jobs = await sheetsService.getSheetData(SHEET);
-    const { keyword, location, category, urgentOnly, salaryPeriod } = req.query;
-    if (keyword) {
-      const q = keyword.toLowerCase();
-      jobs = jobs.filter(j =>
-        (j.title || '').toLowerCase().includes(q) ||
-        (j.category || '').toLowerCase().includes(q) ||
-        (j.description || '').toLowerCase().includes(q) ||
-        (j.location || '').toLowerCase().includes(q)
-      );
-    }
-    if (location) jobs = jobs.filter(j => (j.location || '').toLowerCase().includes(location.toLowerCase()));
-    if (category && category !== 'all') jobs = jobs.filter(j => j.category === category);
-    if (urgentOnly === 'true') jobs = jobs.filter(j => j.isUrgent === 'TRUE' || j.isUrgent === true);
-    if (salaryPeriod && salaryPeriod !== 'all') jobs = jobs.filter(j => j.salaryPeriod === salaryPeriod);
+    const jobs = await supabaseService.getJobs(req.query);
     res.json({ success: true, data: jobs });
   } catch (err) {
     console.error('[GET /api/jobs]', err.message);
@@ -39,11 +24,11 @@ router.get('/', async (req, res) => {
 // GET /api/jobs/:id
 router.get('/:id', async (req, res) => {
   try {
-    const jobs = await sheetsService.getSheetData(SHEET);
-    const job = jobs.find(j => j.id === req.params.id);
+    const job = await supabaseService.getJobById(req.params.id);
     if (!job) return res.status(404).json({ success: false, error: 'Job not found' });
     res.json({ success: true, data: job });
   } catch (err) {
+    console.error('[GET /api/jobs/:id]', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -57,35 +42,40 @@ router.post('/',
   handleValidation,
   async (req, res) => {
     try {
-      const id = `job-${Date.now()}`;
+      const id = req.body.id || `job-${Date.now()}`;
       const job = {
         id,
         title: req.body.title,
         category: req.body.category,
         categoryHi: req.body.categoryHi || '',
         description: req.body.description || '',
-        salary: req.body.salary,
+        salary: Number(req.body.salary) || 0,
         salaryPeriod: req.body.salaryPeriod || 'per_day',
         location: req.body.location,
-        distanceKm: req.body.distanceKm || 0,
-        workersRequired: req.body.workersRequired || 1,
+        distanceKm: Number(req.body.distanceKm) || 0,
+        workersRequired: Number(req.body.workersRequired) || 1,
         workersHired: 0,
         requiredExperience: req.body.requiredExperience || '',
         workDuration: req.body.workDuration || '',
         workingHours: req.body.workingHours || '',
         startDate: req.body.startDate || '',
-        isUrgent: req.body.isUrgent || false,
-        employerId: req.body.employerId || '',
+        isUrgent: Boolean(req.body.isUrgent),
+        employerId: req.body.employerId || 'emp-demo',
         employerName: req.body.employerName || '',
-        employerRating: req.body.employerRating || 0,
+        employerRating: Number(req.body.employerRating) || 5.0,
         employerPhone: req.body.employerPhone || '',
         status: 'active',
         createdAt: new Date().toISOString(),
         applicationsCount: 0,
-        requiredSkills: Array.isArray(req.body.requiredSkills) ? req.body.requiredSkills.join(',') : (req.body.requiredSkills || ''),
+        requiredSkills: Array.isArray(req.body.requiredSkills)
+          ? req.body.requiredSkills
+          : (typeof req.body.requiredSkills === 'string' && req.body.requiredSkills
+              ? req.body.requiredSkills.split(',').map(s => s.trim()).filter(Boolean)
+              : []),
       };
-      await sheetsService.appendRow(SHEET, job);
-      res.status(201).json({ success: true, data: job });
+
+      const created = await supabaseService.createJob(job);
+      res.status(201).json({ success: true, data: created });
     } catch (err) {
       console.error('[POST /api/jobs]', err.message);
       res.status(500).json({ success: false, error: err.message });
@@ -96,27 +86,10 @@ router.post('/',
 // PUT /api/jobs/:id - Update job fields
 router.put('/:id', async (req, res) => {
   try {
-    const jobs = await sheetsService.getSheetData(SHEET);
-    const idx = jobs.findIndex(j => j.id === req.params.id);
-    if (idx === -1) return res.status(404).json({ success: false, error: 'Job not found' });
-    const updated = {
-      ...jobs[idx],
-      title: req.body.title ?? jobs[idx].title,
-      description: req.body.description ?? jobs[idx].description,
-      salary: req.body.salary ?? jobs[idx].salary,
-      salaryPeriod: req.body.salaryPeriod ?? jobs[idx].salaryPeriod,
-      location: req.body.location ?? jobs[idx].location,
-      workersRequired: req.body.workersRequired ?? jobs[idx].workersRequired,
-      requiredExperience: req.body.requiredExperience ?? jobs[idx].requiredExperience,
-      workDuration: req.body.workDuration ?? jobs[idx].workDuration,
-      workingHours: req.body.workingHours ?? jobs[idx].workingHours,
-      status: req.body.status ?? jobs[idx].status,
-      isUrgent: req.body.isUrgent !== undefined ? req.body.isUrgent : jobs[idx].isUrgent,
-      requiredSkills: req.body.requiredSkills !== undefined
-        ? (Array.isArray(req.body.requiredSkills) ? req.body.requiredSkills.join(',') : req.body.requiredSkills)
-        : jobs[idx].requiredSkills,
-    };
-    await sheetsService.updateRow(SHEET, idx + 1, updated);
+    const existing = await supabaseService.getJobById(req.params.id);
+    if (!existing) return res.status(404).json({ success: false, error: 'Job not found' });
+
+    const updated = await supabaseService.updateJob(req.params.id, req.body);
     res.json({ success: true, data: updated });
   } catch (err) {
     console.error('[PUT /api/jobs/:id]', err.message);
@@ -130,13 +103,13 @@ router.patch('/:id/status',
   handleValidation,
   async (req, res) => {
     try {
-      const jobs = await sheetsService.getSheetData(SHEET);
-      const idx = jobs.findIndex(j => j.id === req.params.id);
-      if (idx === -1) return res.status(404).json({ success: false, error: 'Job not found' });
-      jobs[idx].status = req.body.status;
-      await sheetsService.updateRow(SHEET, idx + 1, jobs[idx]);
-      res.json({ success: true, data: jobs[idx] });
+      const existing = await supabaseService.getJobById(req.params.id);
+      if (!existing) return res.status(404).json({ success: false, error: 'Job not found' });
+
+      const updated = await supabaseService.updateJobStatus(req.params.id, req.body.status);
+      res.json({ success: true, data: updated });
     } catch (err) {
+      console.error('[PATCH /api/jobs/:id/status]', err.message);
       res.status(500).json({ success: false, error: err.message });
     }
   }
@@ -145,12 +118,13 @@ router.patch('/:id/status',
 // DELETE /api/jobs/:id
 router.delete('/:id', async (req, res) => {
   try {
-    const jobs = await sheetsService.getSheetData(SHEET);
-    const idx = jobs.findIndex(j => j.id === req.params.id);
-    if (idx === -1) return res.status(404).json({ success: false, error: 'Job not found' });
-    await sheetsService.deleteSheetRow(SHEET, idx + 2); // +2: header row + 1-based
+    const existing = await supabaseService.getJobById(req.params.id);
+    if (!existing) return res.status(404).json({ success: false, error: 'Job not found' });
+
+    await supabaseService.deleteJob(req.params.id);
     res.json({ success: true, message: 'Job deleted' });
   } catch (err) {
+    console.error('[DELETE /api/jobs/:id]', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });

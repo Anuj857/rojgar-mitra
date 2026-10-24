@@ -10,11 +10,18 @@ services:
         value: production
       - key: PORT
         value: 10000
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      # Legacy Google Sheets vars (preserved for rollback if needed)
       - key: GOOGLE_SERVICE_ACCOUNT_EMAIL
         sync: false
       - key: GOOGLE_PRIVATE_KEY
         sync: false
       - key: SPREADSHEET_ID
-        sync: false
-      - key: ALLOWED_ORIGINS
         sync: false

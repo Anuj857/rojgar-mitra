@@ -1,34 +1,22 @@
+'use strict';
 const express = require('express');
 const router = express.Router();
 const { body, validationResult } = require('express-validator');
-const sheetsService = require('../services/sheetsService');
-
-const SHEET = 'Workers';
+const supabaseService = require('../services/supabaseService');
 
 const handleValidation = (req, res, next) => {
   const errors = validationResult(req);
-  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+  if (!errors.isEmpty()) return res.status(400).json({ success: false, errors: errors.array() });
   next();
 };
 
 // GET /api/workers
 router.get('/', async (req, res) => {
   try {
-    let workers = await sheetsService.getSheetData(SHEET);
-    const { keyword, category, location, availability } = req.query;
-    if (keyword) {
-      const q = keyword.toLowerCase();
-      workers = workers.filter(w =>
-        (w.name || '').toLowerCase().includes(q) ||
-        (w.category || '').toLowerCase().includes(q) ||
-        (w.skills || '').toLowerCase().includes(q)
-      );
-    }
-    if (category && category !== 'all') workers = workers.filter(w => w.category === category);
-    if (location) workers = workers.filter(w => (w.location || '').toLowerCase().includes(location.toLowerCase()));
-    if (availability && availability !== 'all') workers = workers.filter(w => w.availabilityStatus === availability);
+    const workers = await supabaseService.getWorkers(req.query);
     res.json({ success: true, data: workers });
   } catch (err) {
+    console.error('[GET /api/workers]', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -36,11 +24,11 @@ router.get('/', async (req, res) => {
 // GET /api/workers/:id
 router.get('/:id', async (req, res) => {
   try {
-    const workers = await sheetsService.getSheetData(SHEET);
-    const worker = workers.find(w => w.id === req.params.id);
+    const worker = await supabaseService.getWorkerById(req.params.id);
     if (!worker) return res.status(404).json({ success: false, error: 'Worker not found' });
     res.json({ success: true, data: worker });
   } catch (err) {
+    console.error('[GET /api/workers/:id]', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -60,25 +48,36 @@ router.post('/',
         mobile: req.body.mobile,
         category: req.body.category,
         categoryHi: req.body.categoryHi || '',
-        skills: Array.isArray(req.body.skills) ? req.body.skills.join(',') : (req.body.skills || ''),
-        experienceYears: req.body.experienceYears || 0,
-        preferredSalary: req.body.preferredSalary || 0,
+        skills: Array.isArray(req.body.skills)
+          ? req.body.skills
+          : (typeof req.body.skills === 'string' && req.body.skills
+              ? req.body.skills.split(',').map(s => s.trim()).filter(Boolean)
+              : []),
+        experienceYears: Number(req.body.experienceYears) || 0,
+        preferredSalary: Number(req.body.preferredSalary) || 0,
         salaryPeriod: req.body.salaryPeriod || 'per_day',
         location: req.body.location || '',
-        distanceKm: req.body.distanceKm || 0,
-        preferredDistanceKm: req.body.preferredDistanceKm || 10,
+        distanceKm: Number(req.body.distanceKm) || 0,
+        preferredDistanceKm: Number(req.body.preferredDistanceKm) || 10,
         availabilityStatus: req.body.availabilityStatus || 'available_now',
         profilePhotoUrl: req.body.profilePhotoUrl || '',
-        rating: req.body.rating || 0,
+        rating: Number(req.body.rating) || 5.0,
         reviewsCount: 0,
         completedJobsCount: 0,
         verified: false,
-        languages: Array.isArray(req.body.languages) ? req.body.languages.join(',') : (req.body.languages || ''),
+        languages: Array.isArray(req.body.languages)
+          ? req.body.languages
+          : (typeof req.body.languages === 'string' && req.body.languages
+              ? req.body.languages.split(',').map(s => s.trim()).filter(Boolean)
+              : ['Hindi']),
         about: req.body.about || '',
+        workHistory: Array.isArray(req.body.workHistory) ? req.body.workHistory : [],
       };
-      await sheetsService.appendRow(SHEET, worker);
-      res.status(201).json({ success: true, data: worker });
+
+      const created = await supabaseService.createWorker(worker);
+      res.status(201).json({ success: true, data: created });
     } catch (err) {
+      console.error('[POST /api/workers]', err.message);
       res.status(500).json({ success: false, error: err.message });
     }
   }
@@ -87,15 +86,13 @@ router.post('/',
 // PUT /api/workers/:id - Update worker profile
 router.put('/:id', async (req, res) => {
   try {
-    const workers = await sheetsService.getSheetData(SHEET);
-    const idx = workers.findIndex(w => w.id === req.params.id);
-    if (idx === -1) return res.status(404).json({ success: false, error: 'Worker not found' });
-    const updated = { ...workers[idx], ...req.body };
-    if (Array.isArray(updated.skills)) updated.skills = updated.skills.join(',');
-    if (Array.isArray(updated.languages)) updated.languages = updated.languages.join(',');
-    await sheetsService.updateRow(SHEET, idx + 1, updated);
+    const existing = await supabaseService.getWorkerById(req.params.id);
+    if (!existing) return res.status(404).json({ success: false, error: 'Worker not found' });
+
+    const updated = await supabaseService.updateWorker(req.params.id, req.body);
     res.json({ success: true, data: updated });
   } catch (err) {
+    console.error('[PUT /api/workers/:id]', err.message);
     res.status(500).json({ success: false, error: err.message });
   }
 });
